@@ -27,6 +27,14 @@ extension ChatClient {
     var mockDatabaseContainer: DatabaseContainerMock {
         databaseContainer as! DatabaseContainerMock
     }
+    
+    var mockConnectionRecoveryHandler: ConnectionRecoveryHandlerMock {
+        connectionRecoveryHandler as! ConnectionRecoveryHandlerMock
+    }
+    
+    var mockClientUpdater: ChatClientUpdaterMock {
+        clientUpdater as! ChatClientUpdaterMock
+    }
 
     func simulateProvidedConnectionId(connectionId: ConnectionId?) {
         guard let connectionId = connectionId else {
@@ -152,7 +160,10 @@ extension ChatClient.Environment {
             requestDecoderBuilder: DefaultRequestDecoder.init,
             eventDecoderBuilder: EventDecoder.init,
             notificationCenterBuilder: EventNotificationCenter.init,
-            clientUpdaterBuilder: ChatClientUpdaterMock.init
+            clientUpdaterBuilder: ChatClientUpdaterMock.init,
+            connectionRecoveryHandlerBuilder: { _, _, _, _, _ in
+                ConnectionRecoveryHandlerMock()
+            }
         )
     }
 

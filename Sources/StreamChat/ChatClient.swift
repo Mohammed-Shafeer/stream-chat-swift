@@ -273,6 +273,16 @@ public class ChatClient {
         self.tokenProvider = tokenProvider
         self.environment = environment
         self.workerBuilders = workerBuilders
+        
+        if let webSocketClient = webSocketClient {
+            connectionRecoveryHandler = environment.connectionRecoveryHandlerBuilder(
+                webSocketClient,
+                eventNotificationCenter,
+                environment.backgroundTaskSchedulerBuilder(),
+                environment.internetConnection(eventNotificationCenter),
+                config.staysConnectedInBackground
+            )
+        }
 
         currentUserId = fetchCurrentUserIdFromDatabase()
     }
@@ -356,16 +366,6 @@ public class ChatClient {
     func createBackgroundWorkers() {
         backgroundWorkers = workerBuilders.map { builder in
             builder(self.databaseContainer, self.apiClient)
-        }
-        
-        if let webSocketClient = webSocketClient {
-            connectionRecoveryHandler = environment.connectionRecoveryHandlerBuilder(
-                webSocketClient,
-                eventNotificationCenter,
-                environment.backgroundTaskSchedulerBuilder(),
-                environment.internetConnection(eventNotificationCenter),
-                config.staysConnectedInBackground
-            )
         }
     }
 

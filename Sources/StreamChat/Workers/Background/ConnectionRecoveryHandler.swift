@@ -5,8 +5,23 @@
 import CoreData
 import Foundation
 
+/// The type that descibes chat component that might need recovery when client reconnects.
+protocol ChatRecoverableComponent: AnyObject {}
+
 /// The type that keeps track of active chat components and asks them to reconnect when it's needed
-protocol ConnectionRecoveryHandler: ConnectionStateDelegate {}
+protocol ConnectionRecoveryHandler: ConnectionStateDelegate {
+    /// The array of registered channel list components.
+    var registeredChannelLists: [ChatRecoverableComponent] { get }
+    
+    /// The array of registered channels components.
+    var registeredChannels: [ChatRecoverableComponent] { get }
+
+    /// Registers channel list component as one that might need recovery on reconnect.
+    func register(channelList: ChatRecoverableComponent)
+    
+    /// Registers channel component as one that might need recovery on reconnect.
+    func register(channel: ChatRecoverableComponent)
+}
 
 /// The type is designed to obtain missing events that happened in watched channels while user
 /// was not connected to the web-socket.
@@ -20,7 +35,7 @@ protocol ConnectionRecoveryHandler: ConnectionStateDelegate {}
 /// We remember `lastReceivedEventDate` when state becomes `connecting` to catch the last event date
 /// before the `HealthCheck` override the `lastReceivedEventDate` with the recent date.
 ///
-final class DefaultConnectionRecoveryHandler: ConnectionRecoveryHandler {
+final class DefaultConnectionRecoveryHandler {
     // MARK: - Properties
     
     private let webSocketClient: WebSocketClient
@@ -31,6 +46,10 @@ final class DefaultConnectionRecoveryHandler: ConnectionRecoveryHandler {
     private var reconnectionStrategy: RetryStrategy
     private var reconnectionTimer: TimerControl?
     private let keepConnectionAliveInBackground: Bool
+    
+    private let componentsAccessQueue = DispatchQueue(label: "co.getStream.ConnectionRecoveryUpdater")
+    private var channelLists: [Weak<ChatRecoverableComponent>] = []
+    private var channels: [Weak<ChatRecoverableComponent>] = []
     
     // MARK: - Init
     
@@ -57,6 +76,50 @@ final class DefaultConnectionRecoveryHandler: ConnectionRecoveryHandler {
     deinit {
         unsubscribeFromNotifications()
         cancelReconnectionTimer()
+    }
+}
+
+// MARK: - ConnectionRecoveryHandler
+
+extension DefaultConnectionRecoveryHandler: ConnectionRecoveryHandler {
+    var registeredChannelLists: [ChatRecoverableComponent] {
+        channelLists.compactMap(\.value)
+    }
+    
+    var registeredChannels: [ChatRecoverableComponent] {
+        channels.compactMap(\.value)
+    }
+    
+    func register(channelList: ChatRecoverableComponent) {
+        componentsAccessQueue.sync {
+            channelLists.removeAll(where: { $0.value == nil || $0.value === channelList })
+            channelLists.append(.init(value: channelList))
+        }
+    }
+    
+    func register(channel: ChatRecoverableComponent) {
+        componentsAccessQueue.sync {
+            channels.removeAll(where: { $0.value == nil || $0.value === channel })
+            channels.append(.init(value: channel))
+        }
+    }
+    
+    func webSocketClient(_ client: WebSocketClient, didUpdateConnectionState state: WebSocketConnectionState) {
+        log.debug("Connection state: \(state)", subsystems: .webSocket)
+        
+        switch state {
+        case .connecting:
+            cancelReconnectionTimer()
+            
+        case .connected:
+            reconnectionStrategy.resetConsecutiveFailures()
+            
+        case .disconnected:
+            scheduleReconnectionTimerIfNeeded()
+            
+        case .initialized, .waitingForConnectionId, .disconnecting:
+            break
+        }
     }
 }
 
@@ -138,24 +201,6 @@ extension DefaultConnectionRecoveryHandler {
             reconnectIfNeeded()
         } else {
             disconnectIfNeeded()
-        }
-    }
-    
-    func webSocketClient(_ client: WebSocketClient, didUpdateConnectionState state: WebSocketConnectionState) {
-        log.debug("Connection state: \(state)", subsystems: .webSocket)
-        
-        switch state {
-        case .connecting:
-            cancelReconnectionTimer()
-            
-        case .connected:
-            reconnectionStrategy.resetConsecutiveFailures()
-            
-        case .disconnected:
-            scheduleReconnectionTimerIfNeeded()
-            
-        case .initialized, .waitingForConnectionId, .disconnecting:
-            break
         }
     }
 }

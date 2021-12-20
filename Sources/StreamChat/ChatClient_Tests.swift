@@ -794,6 +794,58 @@ class ChatClient_Tests: XCTestCase {
         let streamHeader = sessionHeaders!["X-Stream-Client"] as! String
         XCTAssert(streamHeader.starts(with: prefix))
     }
+    
+    // MARK: - Active components registration
+    
+    func test_whenChannelListControllerIsCreated_itIsRegisterdInConnectionRecoveryUpdater() {
+        // Create chat client with mock environment
+        let client = ChatClient(
+            config: inMemoryStorageConfig,
+            workerBuilders: workerBuilders,
+            environment: .mock
+        )
+        
+        // Get mock recovery handler
+        let mockRecoveryHandler = client.mockConnectionRecoveryHandler
+        
+        // Ask client to make a channel list controller
+        let controller = client.channelListController(query: .init(filter: .exists(.cid)))
+        
+        // Assert channel list controller is registered
+        XCTAssertTrue(mockRecoveryHandler.mock_registerChannelList.calls.first === controller)
+        XCTAssertEqual(mockRecoveryHandler.mock_registerChannelList.count, 1)
+    }
+    
+    func test_whenChannelControllerIsCreated_itIsRegisterdInConnectionRecoveryUpdater() throws {
+        // Create chat client with mock environment
+        let client = ChatClient(
+            config: inMemoryStorageConfig,
+            workerBuilders: workerBuilders,
+            environment: .mock
+        )
+        
+        // Get mock recovery handler
+        let mockRecoveryHandler = client.mockConnectionRecoveryHandler
+        
+        // Simulate connect to have current user id set
+        client.currentUserId = .unique
+        
+        // Ask client to make a channel controllers via all possible ways
+        let controllers = [
+            client.channelController(for: ChannelId.unique),
+            client.channelController(for: ChannelQuery(cid: .unique)),
+            try client.channelController(createChannelWithId: .unique),
+            try client.channelController(createDirectMessageChannelWith: [.unique], extraData: [:])
+        ]
+        
+        // Assert all controller are registered
+        XCTAssertEqual(mockRecoveryHandler.mock_registerChannel.count, controllers.count)
+        controllers.forEach { controller in
+            XCTAssertTrue(
+                mockRecoveryHandler.mock_registerChannel.calls.contains(where: { $0 === controller })
+            )
+        }
+    }
 }
 
 class TestWorker: Worker {

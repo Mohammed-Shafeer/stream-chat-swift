@@ -14,7 +14,7 @@ final class ConnectionRecoveryHandler_Tests: XCTestCase {
     var mockBackgroundTaskScheduler: MockBackgroundTaskScheduler!
     var mockRetryStrategy: MockRetryStrategy!
     var mockTime: VirtualTime { VirtualTimeTimer.time }
-        
+    
     override func setUp() {
         super.setUp()
         
@@ -478,6 +478,118 @@ final class ConnectionRecoveryHandler_Tests: XCTestCase {
         
         // Assert timer is cancelled
         XCTAssertFalse(timer.isActive)
+    }
+    
+    // MARK: - Active components
+    
+    func test_whenChannelListIsRegistered_itGetTracked() {
+        // Create handler
+        handler = makeConnectionRecoveryHandler(keepConnectionAliveInBackground: false)
+        
+        // Create chat components
+        let channelLists = [
+            ChatChannelListController(query: .init(filter: .equal(.cid, to: .unique)), client: mockChatClient),
+            ChatChannelListController(query: .init(filter: .exists(.cid)), client: mockChatClient)
+        ]
+
+        // Assert no components are registered yet
+        XCTAssertTrue(handler.registeredChannelLists.isEmpty)
+        
+        // Register chat components
+        channelLists.forEach {
+            handler.register(channelList: $0)
+        }
+        
+        // Assert chat components are registered
+        XCTAssertEqual(handler.registeredChannelLists.count, channelLists.count)
+        channelLists.forEach { component in
+            XCTAssertTrue(handler.registeredChannelLists.contains(where: { $0 === component }))
+        }
+    }
+    
+    func test_whenRegisteredChannelListIsDeallocated_itStoppedBeingTracked() {
+        // Create handler
+        handler = makeConnectionRecoveryHandler(keepConnectionAliveInBackground: false)
+        
+        // Create chat components
+        var channelLists = [
+            ChatChannelListController(query: .init(filter: .equal(.cid, to: .unique)), client: mockChatClient),
+            ChatChannelListController(query: .init(filter: .exists(.cid)), client: mockChatClient)
+        ]
+        
+        // Register chat components
+        channelLists.forEach {
+            handler.register(channelList: $0)
+        }
+        
+        // Release all chat components
+        channelLists.removeAll()
+        
+        // Assert components are not longer tracked
+        XCTAssertTrue(handler.registeredChannelLists.isEmpty)
+    }
+    
+    func test_whenChannelIsRegistered_itGetTracked() {
+        // Create handler
+        handler = makeConnectionRecoveryHandler(keepConnectionAliveInBackground: false)
+        
+        // Create chat components
+        let channels = [
+            ChatChannelController(
+                channelQuery: .init(cid: .unique),
+                channelListQuery: .init(filter: .exists(.cid)),
+                client: mockChatClient
+            ),
+            ChatChannelController(
+                channelQuery: .init(cid: .unique),
+                channelListQuery: .init(filter: .exists(.cid)),
+                client: mockChatClient
+            )
+        ]
+        
+        // Assert no components are registered yet
+        XCTAssertTrue(handler.registeredChannels.isEmpty)
+        
+        // Register chat components
+        channels.forEach {
+            handler.register(channel: $0)
+        }
+        
+        // Assert chat components are registered
+        XCTAssertEqual(handler.registeredChannels.count, channels.count)
+        channels.forEach { component in
+            XCTAssertTrue(handler.registeredChannels.contains(where: { $0 === component }))
+        }
+    }
+    
+    func test_whenRegisteredChannelIsDeallocated_itStoppedBeingTracked() {
+        // Create handler
+        handler = makeConnectionRecoveryHandler(keepConnectionAliveInBackground: false)
+        
+        // Create chat components
+        var channels = [
+            ChatChannelController(
+                channelQuery: .init(cid: .unique),
+                channelListQuery: .init(filter: .exists(.cid)),
+                client: mockChatClient
+            ),
+            ChatChannelController(
+                channelQuery: .init(cid: .unique),
+                channelListQuery: .init(filter: .exists(.cid)),
+                client: mockChatClient
+            )
+        ]
+        
+        // Register chat components
+        channels.forEach {
+            handler.register(channel: $0)
+        }
+        
+        // Release all chat components
+        channels.removeAll()
+        
+        // Assert components are not longer tracked
+        XCTAssertTrue(handler.registeredChannelLists.isEmpty)
     }
 }
 
