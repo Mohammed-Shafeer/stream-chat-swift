@@ -352,10 +352,6 @@ extension DatabaseSession {
         if let unreadCount = payload.unreadCount {
             try saveCurrentUserUnreadCount(count: unreadCount)
         }
-        
-        if let currentUser = currentUser, let date = payload.createdAt {
-            currentUser.lastReceivedEventDate = date
-        }
 
         try saveMessageIfNeeded(from: payload)
         
