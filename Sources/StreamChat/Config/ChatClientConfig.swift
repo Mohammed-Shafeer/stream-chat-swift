@@ -147,6 +147,11 @@ public struct ChatClientConfig {
     /// Specifies whether `shadowed` messages should be shown in Message list.
     /// For more information, please check "Shadow Bans" docs.
     public var shouldShowShadowedMessages = false
+    
+    /// Specifies message id generation
+    public static var messageIdGenerator: () -> String = {
+        ULID().ulidString
+    }
 
     public init(apiKey: APIKey) {
         self.apiKey = apiKey

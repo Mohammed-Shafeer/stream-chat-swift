@@ -81,6 +81,8 @@ final class DemoAppCoordinator: NSObject, UNUserNotificationCenterDelegate {
 //        config.isLocalStorageEnabled = true
         config.shouldShowShadowedMessages = true
         config.applicationGroupIdentifier = applicationGroupIdentifier
+        
+        ChatClientConfig.messageIdGenerator = { "\(UUID().uuidString.first)" }
 
         // Connect the User
         ChatClient.shared = ChatClient(config: config)
