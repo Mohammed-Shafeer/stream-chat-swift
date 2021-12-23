@@ -13,7 +13,19 @@ struct MemberEventMiddleware: EventMiddleware {
                 try session.saveMember(payload: event.member, channelId: event.cid)
                 
             case let event as MemberAddedEventDTO:
-                try session.saveMember(payload: event.member, channelId: event.cid)
+                let member = try session.saveMember(payload: event.member, channelId: event.cid)
+                
+                // If there are any `MemberListQuery`s observing this Channel
+                // without any filters (so the query observes all members)
+                // the new Member should be linked to them too
+                // so `MemberListController` works as expected
+                // To make it work with queries with filters, we need to mirror `ChannelListController` logic
+                // `shouldListUpdatedChannel` and such
+                if let channel = session.channel(cid: event.cid) {
+                    channel.memberListQueries.filter { $0.filterJSONData == nil }.forEach {
+                        $0.members.insert(member)
+                    }
+                }
 
             case let event as MemberRemovedEventDTO:
                 guard let channel = session.channel(cid: event.cid) else {
@@ -40,6 +52,16 @@ struct MemberEventMiddleware: EventMiddleware {
                 let channel = try session.saveChannel(payload: event.channel, query: nil)
                 let member = try session.saveMember(payload: event.member, channelId: event.channel.cid)
                 channel.membership = member
+                
+                // If there are any `MemberListQuery`s observing this Channel
+                // without any filters (so the query observes all members)
+                // the new Member should be linked to them too
+                // so `MemberListController` works as expected
+                // To make it work with queries with filters, we need to mirror `ChannelListController` logic
+                // `shouldListUpdatedChannel` and such
+                channel.memberListQueries.filter { $0.filterJSONData == nil }.forEach {
+                    $0.members.insert(member)
+                }
                 
             case let event as NotificationRemovedFromChannelEventDTO:
                 guard let channel = session.channel(cid: event.cid) else {
@@ -81,6 +103,17 @@ struct MemberEventMiddleware: EventMiddleware {
                 }
                 let member = try session.saveMember(payload: event.member, channelId: event.cid)
                 channel.membership = member
+                
+                // If there are any `MemberListQuery`s observing this Channel
+                // without any filters (so the query observes all members)
+                // the new Member should be linked to them too
+                // so `MemberListController` works as expected
+                // To make it work with queries with filters, we need to mirror `ChannelListController` logic
+                // `shouldListUpdatedChannel` and such
+                channel.memberListQueries.filter { $0.filterJSONData == nil }.forEach {
+                    $0.members.insert(member)
+                }
+                
             default:
                 break
             }
