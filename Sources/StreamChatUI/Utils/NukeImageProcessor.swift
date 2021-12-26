@@ -64,10 +64,12 @@ extension ImageProcessors {
         }
 
         private let sizeProvider: () -> CGSize
+        public let url: URL
         
         /// Initializes the processor with size providing closure.
         /// - Parameter sizeProvider: Closure to obtain size after the image is loaded.
-        public init(sizeProvider: @escaping () -> CGSize) {
+        public init(url: URL, sizeProvider: @escaping () -> CGSize) {
+            self.url = url
             self.sizeProvider = sizeProvider
         }
 
@@ -84,7 +86,7 @@ extension ImageProcessors {
         }
 
         public var identifier: String {
-            "com.github.kean/nuke/lateResize"
+            "com.github.kean/nuke/lateResize?url=\(url.absoluteString)"
         }
     }
 }
