@@ -6,7 +6,22 @@ import CoreData
 import Foundation
 
 /// The type that descibes chat component that might need recovery when client reconnects.
-protocol ChatRecoverableComponent: AnyObject {}
+protocol ChatRecoverableComponent: AnyObject {
+    typealias LocalSyncedCIDs = Set<ChannelId>
+    typealias LocalWatchedCIDs = Set<ChannelId>
+    
+    /// Says if the component needs recovery.
+    var requiresRecovery: Bool { get }
+    
+    /// Recovers a component giving it information about already synced and watched channels.
+    ///
+    /// The completion should return set of channel IDs related to this component that were recovered and watched.
+    func recover(
+        syncedCIDs: LocalSyncedCIDs,
+        watchedCIDs: LocalWatchedCIDs,
+        completion: @escaping (Result<LocalWatchedCIDs, Error>) -> Void
+    )
+}
 
 /// The type that keeps track of active chat components and asks them to reconnect when it's needed
 protocol ConnectionRecoveryHandler: ConnectionStateDelegate {
@@ -21,6 +36,18 @@ protocol ConnectionRecoveryHandler: ConnectionStateDelegate {
     
     /// Registers channel component as one that might need recovery on reconnect.
     func register(channel: ChatRecoverableComponent)
+}
+
+extension ConnectionRecoveryHandler {
+    /// Returns registered channel list components that require recovery.
+    var channelListsToRecover: [ChatRecoverableComponent] {
+        registeredChannelLists.filter(\.requiresRecovery)
+    }
+    
+    /// Returns registered channel components that require recovery.
+    var channelsToRecover: [ChatRecoverableComponent] {
+        registeredChannels.filter(\.requiresRecovery)
+    }
 }
 
 /// The type is designed to obtain missing events that happened in watched channels while user
@@ -38,6 +65,8 @@ protocol ConnectionRecoveryHandler: ConnectionStateDelegate {
 final class DefaultConnectionRecoveryHandler {
     // MARK: - Properties
     
+    private let database: DatabaseContainer
+    private let apiClient: APIClient
     private let webSocketClient: WebSocketClient
     private let eventNotificationCenter: EventNotificationCenter
     private let backgroundTaskScheduler: BackgroundTaskScheduler?
@@ -54,6 +83,8 @@ final class DefaultConnectionRecoveryHandler {
     // MARK: - Init
     
     init(
+        database: DatabaseContainer,
+        apiClient: APIClient,
         webSocketClient: WebSocketClient,
         eventNotificationCenter: EventNotificationCenter,
         backgroundTaskScheduler: BackgroundTaskScheduler?,
@@ -62,6 +93,8 @@ final class DefaultConnectionRecoveryHandler {
         reconnectionTimerType: Timer.Type,
         keepConnectionAliveInBackground: Bool
     ) {
+        self.database = database
+        self.apiClient = apiClient
         self.webSocketClient = webSocketClient
         self.eventNotificationCenter = eventNotificationCenter
         self.backgroundTaskScheduler = backgroundTaskScheduler
@@ -114,6 +147,15 @@ extension DefaultConnectionRecoveryHandler: ConnectionRecoveryHandler {
         case .connected:
             reconnectionStrategy.resetConsecutiveFailures()
             
+            syncLocalStateWithRemote { [weak self] in
+                if let error = $0 {
+                    log.info("❌ Local state is NOT synced with remote: \(error.localizedDescription)")
+                    
+                    self?.disconnectIfNeeded()
+                } else {
+                    log.info("✅ Local state is synced with remote")
+                }
+            }
         case .disconnected:
             scheduleReconnectionTimerIfNeeded()
             
@@ -261,6 +303,194 @@ private extension DefaultConnectionRecoveryHandler {
     }
 }
 
+// MARK: - Syncing local data with remote
+
+private extension DefaultConnectionRecoveryHandler {
+    func syncLocalStateWithRemote(completion: @escaping (Error?) -> Void) {
+        // 1. Load last sync timestamp
+        loadLastSyncDate { [weak self] in
+            guard let lastSyncedAt = $0 else {
+                // That's the first session of the current user. Bump `lastSyncedAt` with current time and return.
+                self?.bumpLastSyncDate(.init()) { completion(nil) }
+                return
+            }
+            
+            // 2. Load locally existed channel identifiers
+            self?.loadLocalChannels { cidsToSync in
+                // 3. Fetch missing events and save to database
+                self?.fetchAndSaveMissingEvents(for: cidsToSync, since: lastSyncedAt) {
+                    guard case .success(let (syncedCIDs, mostRecentEventDate)) = $0 else {
+                        completion($0.error)
+                        return
+                    }
+                    
+                    // 4. Recover active channels
+                    self?.recover(
+                        channels: self?.channelsToRecover ?? [],
+                        syncedCIDs: syncedCIDs
+                    ) {
+                        guard case let .success(watchedCIDs) = $0 else {
+                            completion($0.error)
+                            return
+                        }
+                        
+                        // 5. Recover active channel lists
+                        self?.recover(
+                            channelLists: self?.channelListsToRecover ?? [],
+                            syncedCIDs: syncedCIDs,
+                            watchedCIDs: watchedCIDs
+                        ) {
+                            guard $0 == nil else {
+                                completion($0)
+                                return
+                            }
+                            
+                            // 6. Update last sync date since all missing events were applied
+                            self?.bumpLastSyncDate(mostRecentEventDate) {
+                                completion(nil)
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    func fetchAndSaveMissingEvents(
+        for cids: Set<ChannelId>,
+        since lastSyncedAt: Date,
+        completion: @escaping (Result<(Set<ChannelId>, Date), Error>) -> Void
+    ) {
+        guard !cids.isEmpty else {
+            completion(.success((cids, lastSyncedAt)))
+            return
+        }
+        
+        apiClient.request(
+            endpoint: .missingEvents(since: lastSyncedAt, cids: .init(cids))
+        ) { [weak self] in
+            switch $0 {
+            case let .success(payload):
+                self?.eventNotificationCenter.process(
+                    payload.eventPayloads.asEvents(),
+                    postNotifications: false
+                ) {
+                    let mostRecentEventTimestamp = payload.eventPayloads.last?.createdAt ?? lastSyncedAt
+                    
+                    completion(.success((cids, mostRecentEventTimestamp)))
+                }
+            case let .failure(error):
+                guard error.isTooManyMissingEventsToSyncError else {
+                    log.error("Fail to get missing events: \(error)")
+                    completion(.failure(error))
+                    return
+                }
+                
+                log.info(
+                    """
+                    Backend couldn't handle replaying missing events - there was too many (>1000) events to replay. \
+                    Cleaning local channels data and refetching it from scratch
+                    """
+                )
+                
+                completion(.success(([], Date())))
+            }
+        }
+    }
+    
+    func recover(
+        channels: [ChatRecoverableComponent],
+        syncedCIDs: ChatRecoverableComponent.LocalSyncedCIDs,
+        completion: @escaping (Result<ChatRecoverableComponent.LocalWatchedCIDs, Error>) -> Void
+    ) {
+        let group = DispatchGroup()
+        let semaphore = DispatchSemaphore(value: 1)
+        
+        var watchedCIDs = ChatRecoverableComponent.LocalWatchedCIDs()
+        var errors = [Error]()
+        
+        for channel in channels {
+            group.enter()
+            
+            channel.recover(syncedCIDs: syncedCIDs, watchedCIDs: []) {
+                semaphore.wait()
+                switch $0 {
+                case let .success(newWatchedCIDs):
+                    watchedCIDs.formUnion(newWatchedCIDs)
+                case let .failure(error):
+                    errors.append(error)
+                }
+                semaphore.signal()
+                
+                group.leave()
+            }
+        }
+        
+        group.notify(queue: .main) {
+            if let error = errors.first {
+                completion(.failure(error))
+            } else {
+                completion(.success(watchedCIDs))
+            }
+        }
+    }
+    
+    func recover(
+        channelLists: [ChatRecoverableComponent],
+        syncedCIDs: ChatRecoverableComponent.LocalSyncedCIDs,
+        watchedCIDs: ChatRecoverableComponent.LocalWatchedCIDs,
+        completion: @escaping (Error?) -> Void
+    ) {
+        guard let channelList = channelLists.first else {
+            completion(nil)
+            return
+        }
+        
+        channelList.recover(syncedCIDs: syncedCIDs, watchedCIDs: watchedCIDs) { [weak self] in
+            switch $0 {
+            case let .success(newWatchedCIDs):
+                self?.recover(
+                    channelLists: .init(channelLists.dropFirst()),
+                    syncedCIDs: syncedCIDs,
+                    watchedCIDs: watchedCIDs.union(newWatchedCIDs),
+                    completion: completion
+                )
+            case let .failure(error):
+                completion(error)
+            }
+        }
+    }
+    
+    func bumpLastSyncDate(_ lastSyncedAt: Date, completion: @escaping () -> Void) {
+        database.write({ session in
+            session.currentUser?.lastSyncedAt = lastSyncedAt
+        }, completion: { _ in
+            completion()
+        })
+    }
+    
+    func loadLocalChannels(completion: @escaping (Set<ChannelId>) -> Void) {
+        database.write { session in
+            let cids = Set(
+                session
+                    .loadAllChannelListQueries()
+                    .flatMap(\.channels)
+                    .compactMap { try? ChannelId(cid: $0.cid) }
+            )
+            
+            completion(cids)
+        }
+    }
+    
+    func loadLastSyncDate(completion: @escaping (Date?) -> Void) {
+        database.write { session in
+            let lastSyncedAt = session.currentUser?.lastSyncedAt
+            
+            completion(lastSyncedAt)
+        }
+    }
+}
+
 // MARK: - Reconnection Timer
 
 private extension DefaultConnectionRecoveryHandler {
@@ -293,5 +523,12 @@ private extension DefaultConnectionRecoveryHandler {
         
         reconnectionTimer?.cancel()
         reconnectionTimer = nil
+    }
+}
+
+extension Error {
+    /// Backend responds with 400 if there was more than 1000 events to replay
+    var isTooManyMissingEventsToSyncError: Bool {
+        isBackendErrorWith400StatusCode
     }
 }

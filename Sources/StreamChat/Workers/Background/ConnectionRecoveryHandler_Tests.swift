@@ -598,6 +598,8 @@ final class ConnectionRecoveryHandler_Tests: XCTestCase {
 private extension ConnectionRecoveryHandler_Tests {
     func makeConnectionRecoveryHandler(keepConnectionAliveInBackground: Bool) -> DefaultConnectionRecoveryHandler {
         let handler = DefaultConnectionRecoveryHandler(
+            database: mockChatClient.mockDatabaseContainer,
+            apiClient: mockChatClient.mockAPIClient,
             webSocketClient: mockChatClient.mockWebSocketClient,
             eventNotificationCenter: mockChatClient.eventNotificationCenter,
             backgroundTaskScheduler: mockBackgroundTaskScheduler,

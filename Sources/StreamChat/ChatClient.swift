@@ -276,6 +276,8 @@ public class ChatClient {
         
         if let webSocketClient = webSocketClient {
             connectionRecoveryHandler = environment.connectionRecoveryHandlerBuilder(
+                databaseContainer,
+                apiClient,
                 webSocketClient,
                 eventNotificationCenter,
                 environment.backgroundTaskSchedulerBuilder(),
@@ -480,6 +482,8 @@ extension ChatClient {
         var tokenExpirationRetryStrategy: RetryStrategy = DefaultRetryStrategy()
         
         var connectionRecoveryHandlerBuilder: (
+            _ database: DatabaseContainer,
+            _ apiClient: APIClient,
             _ webSocketClient: WebSocketClient,
             _ eventNotificationCenter: EventNotificationCenter,
             _ backgroundTaskScheduler: BackgroundTaskScheduler?,
@@ -487,13 +491,15 @@ extension ChatClient {
             _ keepConnectionAliveInBackground: Bool
         ) -> ConnectionRecoveryHandler = {
             DefaultConnectionRecoveryHandler(
-                webSocketClient: $0,
-                eventNotificationCenter: $1,
-                backgroundTaskScheduler: $2,
-                internetConnection: $3,
+                database: $0,
+                apiClient: $1,
+                webSocketClient: $2,
+                eventNotificationCenter: $3,
+                backgroundTaskScheduler: $4,
+                internetConnection: $5,
                 reconnectionStrategy: DefaultRetryStrategy(),
                 reconnectionTimerType: DefaultTimer.self,
-                keepConnectionAliveInBackground: $4
+                keepConnectionAliveInBackground: $6
             )
         }
     }

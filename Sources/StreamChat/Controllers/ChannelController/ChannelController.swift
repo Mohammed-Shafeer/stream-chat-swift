@@ -1132,6 +1132,7 @@ public extension ChatChannelController {
             return
         }
         updater.startWatching(cid: cid) { error in
+            self.state = error.map { .remoteDataFetchFailed(ClientError(with: $0)) } ?? .remoteDataFetched
             self.callback {
                 completion?(error)
             }
@@ -1162,6 +1163,7 @@ public extension ChatChannelController {
             return
         }
         updater.stopWatching(cid: cid) { error in
+            self.state = error.map { .remoteDataFetchFailed(ClientError(with: $0)) } ?? .localDataFetched
             self.callback {
                 completion?(error)
             }
@@ -1265,7 +1267,42 @@ public extension ChatChannelController {
 
 // MARK: - ChatRecoverableComponent
 
-extension ChatChannelController: ChatRecoverableComponent {}
+extension ChatChannelController: ChatRecoverableComponent {
+    var requiresRecovery: Bool {
+        switch state {
+        case .remoteDataFetched, .remoteDataFetchFailed:
+            return true
+        default:
+            return false
+        }
+    }
+    
+    func recover(
+        syncedCIDs: LocalSyncedCIDs,
+        watchedCIDs: LocalWatchedCIDs,
+        completion: @escaping (Result<LocalWatchedCIDs, Error>) -> Void
+    ) {
+        if let cid = cid, isChannelAlreadyCreated, syncedCIDs.contains(cid) {
+            startWatching { error in
+                if let error = error {
+                    completion(.failure(error))
+                } else {
+                    completion(.success([cid]))
+                }
+            }
+        } else {
+            synchronize { error in
+                if let cid = self.cid {
+                    completion(.success([cid]))
+                } else if let error = error {
+                    completion(.failure(error))
+                } else {
+                    completion(.failure(ClientError.Unexpected()))
+                }
+            }
+        }
+    }
+}
 
 extension ChatChannelController {
     struct Environment {

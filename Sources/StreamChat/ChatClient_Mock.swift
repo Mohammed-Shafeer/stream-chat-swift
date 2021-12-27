@@ -161,7 +161,7 @@ extension ChatClient.Environment {
             eventDecoderBuilder: EventDecoder.init,
             notificationCenterBuilder: EventNotificationCenter.init,
             clientUpdaterBuilder: ChatClientUpdaterMock.init,
-            connectionRecoveryHandlerBuilder: { _, _, _, _, _ in
+            connectionRecoveryHandlerBuilder: { _, _, _, _, _, _, _ in
                 ConnectionRecoveryHandlerMock()
             }
         )
